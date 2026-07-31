@@ -1,0 +1,94 @@
+name: Test generated release notes
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 32
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Run generator tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Generate native and upstream-aware notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+          UPSTREAM_REPOSITORY: Pxx500/test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PREVIOUS_TAG="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq "map(select(.draft == false and .tag_name != \"${RELEASE_VERSION}\"))[0].tag_name"
+          )"
+
+          USE_PREVIOUS_TAG=false
+          if [[ -n "${PREVIOUS_TAG}" && "${PREVIOUS_TAG}" != "null" ]]; then
+            if ! git rev-parse --verify "${PREVIOUS_TAG}^{commit}" > /dev/null 2>&1; then
+              git fetch --no-tags --depth=1 origin \
+                "refs/tags/${PREVIOUS_TAG}:refs/tags/${PREVIOUS_TAG}" \
+                || echo "Previous tag could not be fetched; upstream entries will be skipped."
+            fi
+
+            if git merge-base --is-ancestor "${PREVIOUS_TAG}" "${RELEASE_VERSION}" 2> /dev/null; then
+              USE_PREVIOUS_TAG=true
+            else
+              echo "Previous tag is outside the available history; using GitHub's default release notes."
+            fi
+          else
+            echo "No previous release was found; using GitHub's default release notes."
+          fi
+
+          if [[ "${USE_PREVIOUS_TAG}" != "true" ]]; then
+            gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${RELEASE_VERSION}" \
+              --jq '.body' > native-notes.md
+            : > upstream-notes.md
+          else
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${RELEASE_VERSION}" \
+            -f previous_tag_name="${PREVIOUS_TAG}" \
+            --jq '.body' > native-notes.md
+
+          python scripts/generate_upstream_notes.py \
+            --upstream "${UPSTREAM_REPOSITORY}" \
+            --previous-tag "${PREVIOUS_TAG}" \
+            --current-tag "${RELEASE_VERSION}" \
+            > upstream-notes.md
+          fi
+
+          python scripts/merge_release_notes.py \
+            native-notes.md upstream-notes.md \
+            > release-notes.md
+
+          cat release-notes.md
+
+      - name: Prepare a test release artifact
+        run: printf 'release artifact for %s\n' "${{ github.ref_name }}" > release-artifact.txt
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: gh release create "${RELEASE_VERSION}" --title "${RELEASE_VERSION}" --notes-file release-notes.md release-artifact.txt
