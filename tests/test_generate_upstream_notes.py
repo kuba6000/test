@@ -115,6 +115,54 @@ class GenerateUpstreamNotesTest(unittest.TestCase):
             self.assertIn("@friend", result.stdout)
             self.assertIn("https://github.com/Pxx500/test/pull/7", result.stdout)
 
+    def test_cli_skips_upstream_entries_for_unrelated_histories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            run_git(repo, "init", "--initial-branch=main")
+            run_git(repo, "config", "user.name", "Release Test")
+            run_git(repo, "config", "user.email", "release-test@example.com")
+            run_git(repo, "config", "commit.gpgsign", "false")
+
+            (repo / "history.txt").write_text("baseline\n", encoding="utf-8")
+            run_git(repo, "add", "history.txt")
+            run_git(repo, "commit", "-m", "Baseline")
+            run_git(repo, "tag", "v0.1.0")
+
+            rewritten_commit = run_git(
+                repo, "commit-tree", "HEAD^{tree}", "-m", "Rewritten root"
+            )
+            run_git(repo, "tag", "v0.2.0", rewritten_commit)
+
+            ancestry = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", "v0.1.0", "v0.2.0"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(ancestry.returncode, 0)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(GENERATOR),
+                    "--upstream",
+                    "Pxx500/test",
+                    "--previous-tag",
+                    "v0.1.0",
+                    "--current-tag",
+                    "v0.2.0",
+                    "--api-url",
+                    "http://127.0.0.1:9",
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertTrue(result.stderr.strip())
+
     def test_cli_skips_upstream_entries_when_shallow_history_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
