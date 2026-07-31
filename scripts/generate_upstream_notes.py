@@ -37,6 +37,15 @@ def commits_between(previous_tag: str, current_tag: str) -> list[str]:
     return result.stdout.splitlines()
 
 
+def has_complete_history(previous_tag: str, current_tag: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", previous_tag, current_tag],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def associated_pull_requests(
     api_url: str, upstream: str, commit: str, token: str | None
 ) -> list[dict[str, object]]:
@@ -79,6 +88,14 @@ def render_notes(pull_requests: list[dict[str, object]]) -> str:
 
 def main() -> int:
     args = parse_args()
+    if not has_complete_history(args.previous_tag, args.current_tag):
+        print(
+            "Skipping upstream release notes because the commit range is not "
+            "available in the shallow checkout.",
+            file=sys.stderr,
+        )
+        return 0
+
     discovered: list[dict[str, object]] = []
     seen_urls: set[str] = set()
 

@@ -115,6 +115,74 @@ class GenerateUpstreamNotesTest(unittest.TestCase):
             self.assertIn("@friend", result.stdout)
             self.assertIn("https://github.com/Pxx500/test/pull/7", result.stdout)
 
+    def test_cli_skips_upstream_entries_when_shallow_history_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            shallow = root / "shallow"
+            source.mkdir()
+
+            run_git(source, "init", "--initial-branch=main")
+            run_git(source, "config", "user.name", "Release Test")
+            run_git(source, "config", "user.email", "release-test@example.com")
+            run_git(source, "config", "commit.gpgsign", "false")
+
+            tracked_file = source / "history.txt"
+            tracked_file.write_text("baseline\n", encoding="utf-8")
+            run_git(source, "add", "history.txt")
+            run_git(source, "commit", "-m", "Baseline")
+            run_git(source, "tag", "v0.1.0")
+
+            for index in range(33):
+                tracked_file.write_text(f"change {index}\n", encoding="utf-8")
+                run_git(source, "commit", "-am", f"Change {index}")
+
+            clone = subprocess.run(
+                ["git", "clone", "--depth", "32", source.as_uri(), str(shallow)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(clone.returncode, 0, clone.stderr)
+            run_git(shallow, "fetch", "--depth=1", "origin", "tag", "v0.1.0")
+
+            ancestry = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={shallow.as_posix()}",
+                    "merge-base",
+                    "--is-ancestor",
+                    "v0.1.0",
+                    "HEAD",
+                ],
+                cwd=shallow,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(ancestry.returncode, 0)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(GENERATOR),
+                    "--upstream",
+                    "Pxx500/test",
+                    "--previous-tag",
+                    "v0.1.0",
+                    "--current-tag",
+                    "HEAD",
+                    "--api-url",
+                    "http://127.0.0.1:9",
+                ],
+                cwd=shallow,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertTrue(result.stderr.strip())
+
 
 if __name__ == "__main__":
     unittest.main()
