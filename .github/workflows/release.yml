@@ -1,0 +1,76 @@
+name: Test generated release notes
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Run generator tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Generate native and upstream-aware notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+          UPSTREAM_REPOSITORY: Pxx500/test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PREVIOUS_TAG="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq "map(select(.draft == false and .tag_name != \"${RELEASE_VERSION}\"))[0].tag_name"
+          )"
+
+          if [[ -z "${PREVIOUS_TAG}" ]]; then
+            echo "No previous release was found." >&2
+            exit 1
+          fi
+
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${RELEASE_VERSION}" \
+            -f previous_tag_name="${PREVIOUS_TAG}" \
+            --jq '.body' > native-notes.md
+
+          python scripts/generate_upstream_notes.py \
+            --upstream "${UPSTREAM_REPOSITORY}" \
+            --previous-tag "${PREVIOUS_TAG}" \
+            --current-tag "${RELEASE_VERSION}" \
+            > upstream-notes.md
+
+          {
+            echo "## Notes generated natively by GitHub"
+            echo
+            cat native-notes.md
+            if [[ -s upstream-notes.md ]]; then
+              echo
+              cat upstream-notes.md
+            fi
+          } > release-notes.md
+
+          cat release-notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: gh release create "${RELEASE_VERSION}" --title "${RELEASE_VERSION}" --notes-file release-notes.md
