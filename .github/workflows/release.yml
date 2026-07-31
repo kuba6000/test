@@ -57,15 +57,9 @@ jobs:
             --current-tag "${RELEASE_VERSION}" \
             > upstream-notes.md
 
-          {
-            echo "## Notes generated natively by GitHub"
-            echo
-            cat native-notes.md
-            if [[ -s upstream-notes.md ]]; then
-              echo
-              cat upstream-notes.md
-            fi
-          } > release-notes.md
+          python scripts/merge_release_notes.py \
+            native-notes.md upstream-notes.md \
+            > release-notes.md
 
           cat release-notes.md
 

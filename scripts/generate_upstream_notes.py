@@ -66,7 +66,7 @@ def render_notes(pull_requests: list[dict[str, object]]) -> str:
     if not pull_requests:
         return ""
 
-    lines = ["## Upstream changes", ""]
+    lines: list[str] = []
     for pull_request in pull_requests:
         user = pull_request.get("user")
         login = user.get("login") if isinstance(user, dict) else None

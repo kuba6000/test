@@ -109,6 +109,8 @@ class GenerateUpstreamNotesTest(unittest.TestCase):
                 server.server_close()
 
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("## Upstream changes", result.stdout)
+            self.assertTrue(result.stdout.startswith("* "), result.stdout)
             self.assertIn("Document the test repository", result.stdout)
             self.assertIn("@friend", result.stdout)
             self.assertIn("https://github.com/Pxx500/test/pull/7", result.stdout)
